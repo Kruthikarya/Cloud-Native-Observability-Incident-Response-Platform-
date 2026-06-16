@@ -3,6 +3,12 @@
 Production-oriented Spring Boot microservices platform for DevOps, SRE, monitoring, incident response, Kubernetes visibility, CI/CD readiness, distributed tracing, centralized logging, and operational dashboards.
 
 The project simulates enterprise monitoring products such as Datadog, Grafana Cloud, New Relic, and Dynatrace while keeping the codebase approachable for local development.
+<img width="1536" height="1024" alt="ChatGPT Image May 14, 2026, 08_23_24 PM" src="https://github.com/user-attachments/assets/2e84598d-05f3-408f-8301-47ad69a9fe5d" />
+
+<img width="1536" height="1024" alt="ChatGPT Image May 14, 2026, 08_23_37 PM" src="https://github.com/user-attachments/assets/4f680bce-6bd6-4a75-8914-1b726fa2f4ad" />
+<img width="1536" height="1024" alt="ChatGPT Image May 14, 2026, 08_24_07 PM - Copy - Copy" src="https://github.com/user-attachments/assets/f809ce10-0c22-43dd-8155-10c2f3e6ff60" />
+
+
 
 ## Architecture
 
