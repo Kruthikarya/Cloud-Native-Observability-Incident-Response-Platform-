@@ -1,0 +1,43 @@
+namespace: observability
+
+image:
+  repositoryPrefix: observability
+  tag: 1.0.0
+  pullPolicy: IfNotPresent
+
+postgres:
+  host: postgresql
+  user: observability
+  password: observability
+
+jwtSecret: change-me-to-a-very-long-256-bit-secret-key
+
+services:
+  - name: service-registry
+    port: 8761
+    replicas: 1
+  - name: config-server
+    port: 8888
+    replicas: 1
+  - name: api-gateway
+    port: 8080
+    replicas: 2
+  - name: auth-service
+    port: 8081
+    replicas: 2
+  - name: monitoring-service
+    port: 8082
+    replicas: 2
+  - name: alert-service
+    port: 8083
+    replicas: 2
+  - name: notification-service
+    port: 8084
+    replicas: 2
+  - name: dashboard-ui
+    port: 80
+    replicas: 2
+
+ingress:
+  enabled: true
+  host: observability.local

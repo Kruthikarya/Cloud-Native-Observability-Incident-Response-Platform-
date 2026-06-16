@@ -1,0 +1,254 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: observability-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-observability}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-observability}
+      POSTGRES_DB: observability
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-observability}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - observability
+
+  service-registry:
+    build: ./service-registry
+    image: observability/service-registry:1.0.0
+    ports:
+      - "8761:8761"
+    environment:
+      EUREKA_INSTANCE_HOSTNAME: service-registry
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8761/actuator/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 12
+    networks:
+      - observability
+
+  config-server:
+    build: ./config-server
+    image: observability/config-server:1.0.0
+    ports:
+      - "8888:8888"
+    environment:
+      EUREKA_SERVER_URL: http://service-registry:8761/eureka/
+    depends_on:
+      service-registry:
+        condition: service_healthy
+    networks:
+      - observability
+
+  api-gateway:
+    build: ./api-gateway
+    image: observability/api-gateway:1.0.0
+    ports:
+      - "8080:8080"
+    environment:
+      CONFIG_SERVER_URL: http://config-server:8888
+      EUREKA_SERVER_URL: http://service-registry:8761/eureka/
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+    depends_on:
+      config-server:
+        condition: service_started
+      service-registry:
+        condition: service_healthy
+    networks:
+      - observability
+
+  auth-service:
+    build: ./auth-service
+    image: observability/auth-service:1.0.0
+    ports:
+      - "8081:8081"
+    environment:
+      CONFIG_SERVER_URL: http://config-server:8888
+      EUREKA_SERVER_URL: http://service-registry:8761/eureka/
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-observability}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-observability}
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+      JWT_SECRET: ${JWT_SECRET:-change-me-to-a-very-long-256-bit-secret-key}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      config-server:
+        condition: service_started
+    networks:
+      - observability
+
+  monitoring-service:
+    build: ./monitoring-service
+    image: observability/monitoring-service:1.0.0
+    ports:
+      - "8082:8082"
+    environment:
+      CONFIG_SERVER_URL: http://config-server:8888
+      EUREKA_SERVER_URL: http://service-registry:8761/eureka/
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-observability}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-observability}
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+      PROMETHEUS_URL: http://prometheus:9090
+    depends_on:
+      postgres:
+        condition: service_healthy
+      config-server:
+        condition: service_started
+    networks:
+      - observability
+
+  alert-service:
+    build: ./alert-service
+    image: observability/alert-service:1.0.0
+    ports:
+      - "8083:8083"
+    environment:
+      CONFIG_SERVER_URL: http://config-server:8888
+      EUREKA_SERVER_URL: http://service-registry:8761/eureka/
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-observability}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-observability}
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+      NOTIFICATION_SERVICE_URL: http://notification-service:8084
+    depends_on:
+      postgres:
+        condition: service_healthy
+      notification-service:
+        condition: service_started
+    networks:
+      - observability
+
+  notification-service:
+    build: ./notification-service
+    image: observability/notification-service:1.0.0
+    ports:
+      - "8084:8084"
+    environment:
+      CONFIG_SERVER_URL: http://config-server:8888
+      EUREKA_SERVER_URL: http://service-registry:8761/eureka/
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-observability}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-observability}
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+    depends_on:
+      postgres:
+        condition: service_healthy
+      config-server:
+        condition: service_started
+    networks:
+      - observability
+
+  dashboard-ui:
+    build: ./dashboard-ui
+    image: observability/dashboard-ui:1.0.0
+    ports:
+      - "3000:80"
+    depends_on:
+      api-gateway:
+        condition: service_started
+    networks:
+      - observability
+
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - observability
+
+  grafana:
+    image: grafana/grafana:10.4.3
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - observability
+
+  zipkin:
+    image: openzipkin/zipkin:3.4
+    ports:
+      - "9411:9411"
+    networks:
+      - observability
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    networks:
+      - observability
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.13.4
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./observability/logstash/pipeline:/usr/share/logstash/pipeline:ro
+    depends_on:
+      - elasticsearch
+    networks:
+      - observability
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.13.4
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+    networks:
+      - observability
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.1
+    ports:
+      - "9100:9100"
+    networks:
+      - observability
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    ports:
+      - "8085:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    networks:
+      - observability
+
+networks:
+  observability:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  prometheus-data:
+  grafana-data:
+  elasticsearch-data:

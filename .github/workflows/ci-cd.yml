@@ -1,0 +1,129 @@
+name: Cloud Native Observability CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy_environment:
+        description: Target environment
+        required: true
+        default: staging
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  JAVA_VERSION: "17"
+  REGISTRY: docker.io
+  IMAGE_NAMESPACE: ${{ secrets.DOCKERHUB_USERNAME }}
+
+jobs:
+  test-and-package:
+    name: Test and Package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Run tests
+        run: mvn --batch-mode test
+
+      - name: Package services
+        run: mvn --batch-mode -DskipTests package
+
+      - name: Upload JARs
+        uses: actions/upload-artifact@v4
+        with:
+          name: service-jars
+          path: |
+            */target/*.jar
+            !*/target/*sources.jar
+
+  docker-build:
+    name: Build and Push Images
+    needs: test-and-package
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    strategy:
+      matrix:
+        service:
+          - service-registry
+          - config-server
+          - api-gateway
+          - auth-service
+          - monitoring-service
+          - alert-service
+          - notification-service
+          - dashboard-ui
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download JARs
+        if: matrix.service != 'dashboard-ui'
+        uses: actions/download-artifact@v4
+        with:
+          name: service-jars
+
+      - name: Docker login
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./${{ matrix.service }}
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.service }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.service }}:latest
+
+  deploy:
+    name: Deploy to Kubernetes
+    needs: docker-build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: ${{ github.event.inputs.deploy_environment || 'staging' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Load kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ~/.kube/config
+
+      - name: Deploy manifests
+        run: |
+          kubectl apply -f k8s/
+          kubectl -n observability rollout status deployment/api-gateway --timeout=180s
+          kubectl -n observability rollout status deployment/monitoring-service --timeout=180s
+          kubectl -n observability rollout status deployment/alert-service --timeout=180s
+
+      - name: Health check
+        run: |
+          kubectl -n observability get pods
+          kubectl -n observability get svc
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          kubectl -n observability rollout undo deployment/api-gateway || true
+          kubectl -n observability rollout undo deployment/monitoring-service || true
+          kubectl -n observability rollout undo deployment/alert-service || true
