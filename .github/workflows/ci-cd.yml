@@ -19,7 +19,7 @@ on:
 env:
   JAVA_VERSION: "17"
   REGISTRY: docker.io
-  IMAGE_NAMESPACE: ${{ secrets.DOCKERHUB_USERNAME }}
+
 
 jobs:
   test-and-package:
@@ -88,8 +88,8 @@ jobs:
           context: ./${{ matrix.service }}
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.service }}:${{ github.sha }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.service }}:latest
+            ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:latest
 
   deploy:
     name: Deploy to Kubernetes
